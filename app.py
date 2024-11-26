@@ -9,7 +9,7 @@ conn = psycopg2.connect(
     dbname="pbl6db_vib7", 
     user="pbl6db_vib7_user", 
     password="pSShH9TLnsFV6VxxHiFb9zKoqRxfhuUe", 
-    host="dpg-ct300ejv2p9s73b3qnc0-a", 
+    host="dpg-ct300ejv2p9s73b3qnc0-a.singapore-postgres.render.com", 
     port="5432"
 )
 
@@ -188,7 +188,7 @@ def get_image():
             filename = os.path.basename(image_path)
             return send_from_directory(UPLOAD_FOLDER, filename), 200
         else:
-            return jsonify({"message": "No image found"}), 404
+            return jsonify({"message": ""}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
