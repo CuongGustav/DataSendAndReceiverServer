@@ -1,18 +1,28 @@
 import psycopg2
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 import base64
+import os
 
 
 # Kết nối đến PostgreSQL
 conn = psycopg2.connect(
-    dbname="pbl6db", 
-    user="pbl6db_user", 
-    password="HThN1TO2dBVELOYFdv7aRQK4yNSVTQds", 
-    host="dpg-ct2s33btq21c73b7alug-a.singapore-postgres.render.com", 
+    dbname="pbl6db_vib7", 
+    user="pbl6db_vib7_user", 
+    password="pSShH9TLnsFV6VxxHiFb9zKoqRxfhuUe", 
+    host="dpg-ct300ejv2p9s73b3qnc0-a", 
     port="5432"
 )
 
+
 app = Flask(__name__)
+
+# Thư mục chứa ảnh
+UPLOAD_FOLDER = 'statics'
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
+
+# Cập nhật cấu hình của Flask
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 # Tạo bảng nếu chưa tồn tại
 def create_all_tables():
@@ -29,7 +39,7 @@ def create_all_tables():
         cur.execute("""
             CREATE TABLE IF NOT EXISTS image_data (
                 id SERIAL PRIMARY KEY,
-                image BYTEA NOT NULL
+                image_path TEXT NOT NULL
             );
         """)
         
@@ -63,31 +73,44 @@ def read_text_from_db():
             return {"text": result[0]}
         return {"text": ""}
 
-# Hàm lưu hình ảnh vào cơ sở dữ liệu
-def save_image_to_db(image_base64):
-    with conn.cursor() as cur:
-        # Chuyển đổi chuỗi Base64 thành dữ liệu nhị phân
-        image_data = base64.b64decode(image_base64)
-        
-        # Kiểm tra nếu có ảnh cũ trong cơ sở dữ liệu và xóa nếu có
-        cur.execute("SELECT COUNT(*) FROM image_data")
-        count = cur.fetchone()[0]
-        if count > 0:
-            cur.execute("DELETE FROM image_data WHERE id = (SELECT id FROM image_data ORDER BY id DESC LIMIT 1)")
+# Hàm lưu hình ảnh vào cơ sở dữ liệu và thư mục statics
+def save_image_to_db(image_file):
+    try:
+        with conn.cursor() as cur:
+            # Kiểm tra nếu có ảnh cũ trong cơ sở dữ liệu và xóa nếu có
+            cur.execute("SELECT COUNT(*) FROM image_data")
+            count = cur.fetchone()[0]
+            if count > 0:
+                cur.execute("SELECT image_path FROM image_data ORDER BY id DESC LIMIT 1")
+                result = cur.fetchone()
+                if result:
+                    old_image_path = result[0]
+                    if os.path.exists(old_image_path):
+                        os.remove(old_image_path)
+                cur.execute("DELETE FROM image_data WHERE id = (SELECT id FROM image_data ORDER BY id DESC LIMIT 1)")
+            
+            # Lưu ảnh mới vào thư mục statics
+            image_filename = image_file.filename
+            image_path = os.path.join(app.config['UPLOAD_FOLDER'], image_filename)
+            image_file.save(image_path)
+
+            # Lưu đường dẫn ảnh mới vào cơ sở dữ liệu
+            cur.execute("INSERT INTO image_data (image_path) VALUES (%s)", (image_path,))
             conn.commit()
-        
-        # Thêm hình ảnh mới vào cơ sở dữ liệu
-        cur.execute("INSERT INTO image_data (image) VALUES (%s)", (image_data,))
-        conn.commit()
+    except Exception as e:
+        conn.rollback()  # ROLL BACK TRANSACTION nếu có lỗi
+        raise e  # Đẩy lỗi ra ngoài để API xử lý
+
+
 
 # Hàm đọc hình ảnh từ cơ sở dữ liệu
 def read_image_from_db():
     with conn.cursor() as cur:
-        cur.execute("SELECT image FROM image_data ORDER BY id DESC LIMIT 1")
+        cur.execute("SELECT image_path FROM image_data ORDER BY id DESC LIMIT 1")
         result = cur.fetchone()
         if result:
-            return {"image": base64.b64encode(result[0]).decode("utf-8")}
-        return {"image": ""}
+            return {"image_path": result[0]}
+        return {"image_path": ""}
 
 # Hàm cập nhật trạng thái của image và text
 def update_status(image_status, text_status):
@@ -141,30 +164,31 @@ def check_text():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# API nhận hình ảnh từ client (Base64)
+# API nhận hình ảnh từ client
 @app.route('/upload_image', methods=['POST'])
 def upload_image():
     try:
-        data = request.get_json()
-        image_base64 = data.get('image')  # Dữ liệu ảnh Base64 từ client
-        if image_base64:
-            save_image_to_db(image_base64)  # Lưu ảnh vào DB
-            update_status(True, None)  # Đặt trạng thái mặc định là TRUE (còn trong DB)
+        image_file = request.files.get('image')  # Lấy tệp hình ảnh từ client
+        if image_file:
+            save_image_to_db(image_file)  # Lưu ảnh vào DB và thư mục statics
             return jsonify({"message": "Image received and saved successfully"}), 200
         else:
-            return jsonify({"message": "No image data provided"}), 400
+            return jsonify({"message": "No image file provided"}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# API để lấy hình ảnh từ cơ sở dữ liệu
+# API để lấy hình ảnh từ thư mục statics
 @app.route('/get_image', methods=['GET'])
 def get_image():
     try:
         image_data = read_image_from_db()
-        if "image" in image_data and image_data["image"]:
-            return jsonify({"image": image_data["image"]}), 200
+        if "image_path" in image_data and image_data["image_path"]:
+            # Trả về ảnh từ thư mục statics
+            image_path = image_data["image_path"]
+            filename = os.path.basename(image_path)
+            return send_from_directory(UPLOAD_FOLDER, filename), 200
         else:
-            return jsonify({"message": ""}), 404
+            return jsonify({"message": "No image found"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -176,16 +200,25 @@ def check_image():
         status = data.get('status')
         if status == "success":
             with conn.cursor() as cur:
-                # Xóa hình ảnh nếu nhận thành công
-                cur.execute("DELETE FROM image_data WHERE id = (SELECT id FROM image_data ORDER BY id DESC LIMIT 1)")
-                conn.commit()
-            # Cập nhật trạng thái image_status thành FALSE (đã xóa)
-            update_status(False, None) 
-            return jsonify({"message": "Image deleted successfully and status reset"}), 200
+                # Lấy đường dẫn ảnh mới nhất trong cơ sở dữ liệu
+                cur.execute("SELECT image_path FROM image_data ORDER BY id DESC LIMIT 1")
+                result = cur.fetchone()
+                if result:
+                    image_path = result[0]
+                    # Xóa ảnh khỏi thư mục statics
+                    if os.path.exists(image_path):
+                        os.remove(image_path)
+
+                    # Xóa hình ảnh trong cơ sở dữ liệu
+                    cur.execute("DELETE FROM image_data WHERE id = (SELECT id FROM image_data ORDER BY id DESC LIMIT 1)")
+                    conn.commit()
+                    
+            return jsonify({"message": "Image deleted successfully"}), 200
         else:
             return jsonify({"message": "No 'success' status provided"}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 if __name__ == '__main__':
     # Tạo bảng khi chạy lần đầu
