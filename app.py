@@ -2,6 +2,7 @@ import psycopg2
 from flask import Flask, request, jsonify, send_from_directory
 import base64
 import os
+from flask_cors import CORS
 
 
 # Kết nối đến PostgreSQL
@@ -15,6 +16,7 @@ conn = psycopg2.connect(
 
 
 app = Flask(__name__)
+CORS(app)
 
 # Thư mục chứa ảnh
 UPLOAD_FOLDER = 'statics'
