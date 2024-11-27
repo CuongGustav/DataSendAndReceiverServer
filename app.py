@@ -7,12 +7,13 @@ from flask_cors import CORS
 
 # Kết nối đến PostgreSQL
 conn = psycopg2.connect(
-    dbname="pbl6db_vib7", 
-    user="pbl6db_vib7_user", 
-    password="pSShH9TLnsFV6VxxHiFb9zKoqRxfhuUe", 
-    host="dpg-ct300ejv2p9s73b3qnc0-a.singapore-postgres.render.com", 
+    dbname="dbpbl6", 
+    user="dbpbl6_user", 
+    password="Be3v5Wmax65T6Jf05iXfHugcm3hnfkOD", 
+    host="dpg-ct3hdrrtq21c738rtdrg-a.singapore-postgres.render.com", 
     port="5432"
 )
+
 
 
 app = Flask(__name__)
@@ -33,7 +34,8 @@ def create_all_tables():
         cur.execute("""
             CREATE TABLE IF NOT EXISTS text_data (
                 id SERIAL PRIMARY KEY,
-                content TEXT NOT NULL
+                english TEXT NOT NULL,
+                vietnamese TEXT NOT NULL
             );
         """)
         
@@ -57,23 +59,28 @@ def create_all_tables():
         conn.commit()
 
 # Hàm lưu văn bản vào cơ sở dữ liệu
-def save_text_to_db(text):
+def save_text_to_db(english_text, vietnamese_text):
     with conn.cursor() as cur:
         # Xóa tất cả dữ liệu cũ trong bảng text_data
         cur.execute("DELETE FROM text_data")
         conn.commit()
         # Sau đó, lưu văn bản mới vào bảng
-        cur.execute("INSERT INTO text_data (content) VALUES (%s)", (text,))
+        cur.execute(
+            "INSERT INTO text_data (english, vietnamese) VALUES (%s, %s)",
+            (english_text, vietnamese_text)
+        )
         conn.commit()
+
 
 # Hàm đọc văn bản từ cơ sở dữ liệu
 def read_text_from_db():
     with conn.cursor() as cur:
-        cur.execute("SELECT content FROM text_data ORDER BY id DESC LIMIT 1")
+        cur.execute("SELECT english, vietnamese FROM text_data ORDER BY id DESC LIMIT 1")
         result = cur.fetchone()
         if result:
-            return {"text": result[0]}
-        return {"text": ""}
+            return {"english": result[0], "vietnamese": result[1]}
+        return {"english": "", "vietnamese": ""}
+
 
 # Hàm lưu hình ảnh vào cơ sở dữ liệu và thư mục statics
 def save_image_to_db(image_file):
@@ -125,13 +132,17 @@ def update_status(image_status, text_status):
 def send_text():
     try:
         data = request.get_json()
-        text = data.get('text')
-        if text:
-            save_text_to_db(text)  # Lưu văn bản vào DB
+        english_text = data.get('english')
+        vietnamese_text = data.get('vietnamese')
+        if english_text and vietnamese_text:
+            save_text_to_db(english_text, vietnamese_text)  # Lưu văn bản vào DB
             update_status(None, True)  # Đặt trạng thái mặc định là TRUE (còn trong DB)
-            return jsonify({"message": "Text received successfully", "received_text": text}), 200
+            return jsonify({
+                "message": "Text received successfully",
+                "received_text": {"english": english_text, "vietnamese": vietnamese_text}
+            }), 200
         else:
-            return jsonify({"message": "No text provided"}), 400
+            return jsonify({"message": "Both English and Vietnamese texts are required"}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -140,7 +151,7 @@ def send_text():
 def get_text():
     try:
         text_data = read_text_from_db()
-        if "text" in text_data and text_data["text"]:
+        if "english" in text_data and text_data["english"] and "vietnamese" in text_data and text_data["vietnamese"]:
             return jsonify(text_data), 200
         else:
             return jsonify({"message": ""}), 404
